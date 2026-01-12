@@ -1,3 +1,9 @@
+
+use std::fs::create_dir_all;
+use std::io::Write;
+use std::io::BufReader;
+use std::io::BufWriter;
+use crate::compact_uint::CompactUint;
 use rand::SeedableRng;
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -34,7 +40,7 @@ use std::collections::BinaryHeap;
 
 use crate::sa_utils::{FileRange, SAStream, TextIterator, MatchWriter, MatchWriterElement, TreeNode, LoserTree, read_u64_vec, sa_safety_check, calculate_bytes_per_chunk, ByteSize, get_byte_size};
 use crate::sa_config::{SAConfigOverrides, SAConfig};
-use crate::compact_uint::U40;
+use crate::compact_uint::{U40, read_compact_uint_unchecked};
 /*
 
 Scaling notes:
@@ -337,6 +343,96 @@ fn chunk_data_for_sa(
     owned_chunks
 }
 
+/*============================================================
+=                            PREP TABLES                     =
+============================================================*/
+
+pub fn prep_sa_tables(storage_dir: &PathBuf, match_length: usize) -> Result<(), Error> {
+    // Preps tables to omit any sequences that don't have >=match length in the remainder of the document
+    let start_main = Instant::now();
+    let text_lookup = make_text_lookups(storage_dir).unwrap();
+    let offset_lookup = make_offset_lookups(storage_dir).unwrap();
+
+
+    let table_pattern = storage_dir.clone().join("table").join("table_part_*");
+    let table_objects: Vec<PathBuf> = glob(&table_pattern.to_str().unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|p| p.unwrap())
+        .collect();
+
+    let match_length = match_length as u64;
+
+    let table_streams = table_objects
+        .into_par_iter()
+        .for_each(|p| {
+            let table_idx = get_part_num(&p).unwrap();            
+            let output_filename = storage_dir.clone().join("prepped_table").join(format!("table_part_{:04}.bin", table_idx));
+
+            let sa_element_size = get_byte_size(text_lookup[table_idx].len()); // Either 4, 5, 8
+            let current_offset = offset_lookup.get(table_idx).unwrap(); // Vec<u64>
+
+            match sa_element_size {
+                4 => prep_sa_table_typed::<u32>(&p, &output_filename, current_offset, match_length).unwrap(),
+                5 => prep_sa_table_typed::<U40>(&p, &output_filename, current_offset, match_length).unwrap(),
+                8 => prep_sa_table_typed::<u64>(&p, &output_filename, current_offset, match_length).unwrap(),
+                _ => ()
+
+            };
+        });
+
+    Ok(())
+}
+
+pub fn prep_sa_table_typed<I: CompactUint> (
+    input_path: &PathBuf,
+    output_path: &PathBuf,
+    offset: &[u64],
+    match_length: u64,
+) -> Result<(), Error> {
+    let input_file = File::open(input_path).unwrap();
+
+    if let Some(parent_dir) = output_path.parent() {
+            if !parent_dir.exists() {
+                create_dir_all(parent_dir).unwrap()
+             }
+    }    
+    let output_file = File::create(output_path).unwrap();
+    const BUFFER_SIZE: usize = 64 * 1000 * 1000; // ~64MB
+    let mut reader = BufReader::with_capacity(BUFFER_SIZE, input_file);
+    let mut writer = BufWriter::with_capacity(BUFFER_SIZE, output_file);
+    
+    // Process in large batches for better performance
+    const BATCH_SIZE: usize = 8192; // Process 8K elements at a time
+    let element_size = I::BYTE_SIZE;
+    let _batch_bytes = BATCH_SIZE * element_size;
+
+    let mut element_buffer = vec![0u8; element_size];
+    loop {
+        match reader.read_exact(&mut element_buffer) {
+            Ok(_) => {
+                let value = unsafe {read_compact_uint_unchecked::<I>(&element_buffer)};
+                
+                if check_should_keep_sa_val(value, offset, match_length) {
+                    writer.write_all(&element_buffer).unwrap();
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    writer.flush().unwrap();
+    Ok(())
+}
+
+fn check_should_keep_sa_val(value: u64, offset: &[u64], match_length: u64) -> bool {
+    let idx = offset.partition_point(|&x| x <= value);
+    if idx < offset.len() {
+        offset[idx] - value >= match_length
+    } else {
+        true // Keep in case of weirdness
+    }
+}
 
 
 /*============================================================

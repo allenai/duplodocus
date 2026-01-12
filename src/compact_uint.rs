@@ -179,6 +179,31 @@ impl fmt::Display for U40 {
     }
 }
 
+
+#[inline(always)]
+pub unsafe fn read_compact_uint_unchecked<I: CompactUint>(bytes: &[u8]) -> u64 {
+    match I::BYTE_SIZE {
+        4 => {
+            let ptr = bytes.as_ptr() as *const u32;
+            (*ptr).to_le() as u64
+        }
+        5 => {
+            let ptr = bytes.as_ptr();
+            (*ptr as u64)
+                | ((*ptr.add(1) as u64) << 8)
+                | ((*ptr.add(2) as u64) << 16)
+                | ((*ptr.add(3) as u64) << 24)
+                | ((*ptr.add(4) as u64) << 32)
+        }
+        8 => {
+            let ptr = bytes.as_ptr() as *const u64;
+            (*ptr).to_le()
+        }
+        _ => unreachable!(),
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -100,7 +100,7 @@ use crate::minhash_disk::{
     mh_build_file_map, mh_build_uf, mh_clean_files, mh_gather_edges, mh_hash_docs,
 };
 use crate::minhash_memory::minhash_memory;
-use crate::sa_base::{get_matches_serial, make_sa_tables_cmd, merge_matches, sa_annotate_files, get_matches_parallel};
+use crate::sa_base::{get_matches_serial, make_sa_tables_cmd, merge_matches, sa_annotate_files, get_matches_parallel, prep_sa_tables};
 use crate::true_jaccard::true_jaccard;
 
 pub mod exact_dedup_disk;
@@ -730,6 +730,15 @@ enum Commands {
     },
 
     #[clap(arg_required_else_help = true)]
+    SaPrepTables {
+        #[arg(required=true, long)]
+        storage_dir: PathBuf,
+
+        #[arg(long, default_value_t=500)]
+        match_length: usize,
+    },
+
+    #[clap(arg_required_else_help = true)]
     SaGetMatchesSerial {
         #[arg(required = true, long)]
         storage_dir: PathBuf,
@@ -1007,6 +1016,11 @@ fn main() {
             text_key.clone(),
             *num_batches
         ),
+
+        Commands::SaPrepTables {
+            storage_dir,
+            match_length,
+        } => prep_sa_tables(storage_dir, *match_length),
 
         Commands::SaGetMatchesSerial {
             storage_dir,
