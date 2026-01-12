@@ -323,13 +323,17 @@ impl<'stream, 'a, R: Read + ByteSize> TextIterator<'stream, 'a, R> {
                 if next_idx as usize + self.min_len > self.stream.text.len() { // overruns the endpoint of the stream, skip
                     continue;
                 }
+
+                /*
                 let next_eos = self.next_eos(next_idx as usize).unwrap() as usize;                
                 if next_eos < next_idx as usize + self.min_len { // overruns the endpoint of the doc, skip
                     continue
-                }
+                }                            
                 let slice_end = std::cmp::min(next_eos, next_idx as usize + self.min_len);                
+                */
+                let slice_end = next_idx as usize +  self.min_len;
                 let slice = &self.stream.text[next_idx as usize..slice_end];
-                let rest_of_doc = &self.stream.text[slice_end..next_eos];                
+                let rest_of_doc = &self.stream.text[slice_end..]; //next_eos];                
                 let prev_char: Option<u8> = if next_idx > 0 {
                     let prev_char = (&self.stream.text.get(next_idx as usize - 1)).clone().unwrap();
                     Some(*prev_char)

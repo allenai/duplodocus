@@ -102,6 +102,7 @@ pub fn make_sa_tables_cmd(
     tokenizer: Option<String>,
     max_lines_per_path: Option<usize>,
     text_key: Option<String>,
+    num_batches: f32,
 ) -> Result<(), Error> {
     let file_map = if let Some(file_map_name) = file_map_opt {
         FileMap::load(&file_map_name).unwrap()
@@ -122,7 +123,7 @@ pub fn make_sa_tables_cmd(
 
     let config_obj = SAConfig::load_with_overrides(config_opt, config_overrides).unwrap();
 
-    make_sa_tables(&config_obj, &file_map, input_dir, output_dir)
+    make_sa_tables(&config_obj, &file_map, input_dir, output_dir, num_batches)
 }
 
 pub fn make_sa_tables(
@@ -130,6 +131,7 @@ pub fn make_sa_tables(
     file_map: &FileMap,
     input_dir: &PathBuf,
     output_dir: &PathBuf,
+    num_batches: f32
 ) -> Result<(), Error> {
     assert_eq!(
         1u16.to_ne_bytes(),
@@ -155,7 +157,7 @@ pub fn make_sa_tables(
     let corpus_len: usize = data_docs.par_iter().map(|(_, _, doc)| doc.len() + 2 * 8).sum();
     // assert!(sa_safety_check(corpus_len));
     sa_safety_check(corpus_len);
-    let thread_count = rayon::current_num_threads();
+    let thread_count = (rayon::current_num_threads() as f32 * num_batches) as usize;
     let chunk_text_byte_size = calculate_bytes_per_chunk(thread_count, MEMORY_SAFETY_MARGIN);
 
 
