@@ -406,14 +406,16 @@ pub fn prep_sa_table_typed<I: CompactUint> (
     const BATCH_SIZE: usize = 8192; // Process 8K elements at a time
     let element_size = I::BYTE_SIZE;
     let _batch_bytes = BATCH_SIZE * element_size;
-
+    let mut read_el = 0;
+    let mut written_el = 0;
     let mut element_buffer = vec![0u8; element_size];
     loop {
         match reader.read_exact(&mut element_buffer) {
             Ok(_) => {
                 let value = unsafe {read_compact_uint_unchecked::<I>(&element_buffer)};
-                
+                read_el += 1;
                 if check_should_keep_sa_val(value, offset, match_length) {
+                    written_el += 1;
                     writer.write_all(&element_buffer).unwrap();
                 }
             }
@@ -421,6 +423,7 @@ pub fn prep_sa_table_typed<I: CompactUint> (
             Err(e) => return Err(e.into()),
         }
     }
+    println!("READ EL {:?} | WRITTEN EL {:?}", read_el, written_el);
     writer.flush().unwrap();
     Ok(())
 }
