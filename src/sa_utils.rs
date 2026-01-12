@@ -324,13 +324,15 @@ impl<'stream, 'a, R: Read + ByteSize> TextIterator<'stream, 'a, R> {
                     continue;
                 }
 
-                /*
+                
                 let next_eos = self.next_eos(next_idx as usize).unwrap() as usize;                
+                /*
                 if next_eos < next_idx as usize + self.min_len { // overruns the endpoint of the doc, skip
                     continue
                 }                            
-                let slice_end = std::cmp::min(next_eos, next_idx as usize + self.min_len);                
                 */
+                let slice_end = std::cmp::min(next_eos, next_idx as usize + self.min_len);                
+                
                 let slice_end = next_idx as usize +  self.min_len;
                 let slice = &self.stream.text[next_idx as usize..slice_end];
                 let rest_of_doc = &self.stream.text[slice_end..]; //next_eos];                
