@@ -351,7 +351,7 @@ pub fn prep_sa_tables(storage_dir: &PathBuf, match_length: usize) -> Result<(), 
     // Preps tables to omit any sequences that don't have >=match length in the remainder of the document
     let start_main = Instant::now();
     let text_lookup = make_text_lookups(storage_dir).unwrap();
-    let offset_lookup = make_offset_lookups(storage_dir).unwrap();
+    let mut offset_lookup = make_offset_lookups(storage_dir).unwrap();
 
 
     let table_pattern = storage_dir.clone().join("table").join("table_part_*");
@@ -371,11 +371,17 @@ pub fn prep_sa_tables(storage_dir: &PathBuf, match_length: usize) -> Result<(), 
 
             let sa_element_size = get_byte_size(text_lookup[table_idx].len()); // Either 4, 5, 8
             let current_offset = offset_lookup.get(table_idx).unwrap(); // Vec<u64>
+            let current_offset: Vec<u64> = current_offset.into_iter()
+                .skip(2)
+                .step_by(3)
+                .copied()
+                .collect();
+
 
             match sa_element_size {
-                4 => prep_sa_table_typed::<u32>(&p, &output_filename, current_offset, match_length).unwrap(),
-                5 => prep_sa_table_typed::<U40>(&p, &output_filename, current_offset, match_length).unwrap(),
-                8 => prep_sa_table_typed::<u64>(&p, &output_filename, current_offset, match_length).unwrap(),
+                4 => prep_sa_table_typed::<u32>(&p, &output_filename, &current_offset, match_length).unwrap(),
+                5 => prep_sa_table_typed::<U40>(&p, &output_filename, &current_offset, match_length).unwrap(),
+                8 => prep_sa_table_typed::<u64>(&p, &output_filename, &current_offset, match_length).unwrap(),
                 _ => ()
 
             };
