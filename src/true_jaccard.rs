@@ -234,7 +234,7 @@ fn true_jacc_group(
 
     // Step 3: Make token-ngram sets, gather indices to check, and check jaccard similarities
     // (parallel across docs, then pairs of docs)
-    let toksets = toksetify(&proc_groups, tokenizer, ngram_size).unwrap();
+    let toksets = toksetify(&proc_groups, tokenizer, ngram_size, &String::from("text")).unwrap();
     let pair_indices = generate_pair_indices::<HashSet<u64>>(&toksets);
     let pbar = build_pbar(pair_indices.len(), "Pair checks");
     let passing_pairs: Vec<&(usize, usize, usize)> = pair_indices
@@ -339,23 +339,27 @@ fn text_2_tokset(
     Ok(tokset)
 }
 
-fn toksetify(
-    docs: &Vec<Vec<JSONValue>>,
+fn toksetify<V>(
+    docs: &[V],
     tokenizer: &OmniTokenizer,
     ngram_size: usize,
-) -> Result<Vec<Vec<HashSet<u64>>>, Error> {
+    text_key: &str,
+) -> Result<Vec<Vec<HashSet<u64>>>, Error>
+where
+    V: AsRef<[JSONValue]> + Sync,
+{
     // Flatten with group indices
     let flat_with_indices: Vec<(usize, &JSONValue)> = docs
         .par_iter()
         .enumerate()
-        .flat_map_iter(|(group_idx, inner_vec)| inner_vec.iter().map(move |obj| (group_idx, obj)))
+        .flat_map_iter(|(group_idx, inner_vec)| inner_vec.as_ref().iter().map(move |obj| (group_idx, obj)))
         .collect();
 
     // Process in parallel with good load balancing
     let processed: Vec<(usize, HashSet<u64>)> = flat_with_indices
         .par_iter()
         .map(|(group_idx, obj)| {
-            let text = obj["text"].as_str().unwrap().to_string();
+            let text = obj[text_key].as_str().unwrap().to_string();
             (
                 *group_idx,
                 text_2_tokset(&text, tokenizer, ngram_size).unwrap(),
@@ -371,6 +375,7 @@ fn toksetify(
 
     Ok(result)
 }
+
 
 fn par_annotate(
     docs: Vec<Vec<JSONValue>>,
@@ -546,4 +551,114 @@ fn generate_pair_indices<T>(data: &Vec<Vec<T>>) -> Vec<(usize, usize, usize)> {
             (0..inner.len()).flat_map(move |i| ((i + 1)..inner.len()).map(move |j| (vec_idx, i, j)))
         })
         .collect()
+}
+
+
+/*==========================================================================================
+=                            JACCARD SPOT CHECK                                            =
+==========================================================================================*/
+
+
+pub fn jaccard_spot_check(input_prefix: &PathBuf, output_path: &PathBuf, text_key: &String, minhash_cc_id: Option<String>, tokenizer_name: Option<String>, id_key: &String, annotate_key: &String, ngram_size: usize) -> Result<(), Error> {
+    let tokenizer_name = tokenizer_name.unwrap_or(String::from("bytes"));
+    let tokenizer = OmniTokenizer::new(&tokenizer_name).unwrap();
+
+    let input_paths = collect_files_with_prefix(input_prefix).unwrap();
+    let all_docs: Vec<JSONValue> = input_paths.into_par_iter().flat_map(|p| {
+        let contents = read_pathbuf_to_mem(&p).unwrap();
+        let values: Vec<JSONValue> = contents.lines().map(|line| {
+            let line = line.unwrap();
+            serde_json::from_str(&line).unwrap()
+        }).collect();
+        values
+    }).collect();
+
+    let groups: Vec<Vec<JSONValue>> = if let Some(cc_id) = minhash_cc_id {
+        let group_map: DashMap<JSONValue, Vec<JSONValue>> = DashMap::new();
+        all_docs.into_par_iter().for_each(|doc| {
+            let this_cc_id_opt = json_get(&doc, &cc_id);
+            if let Some(this_cc_id) = this_cc_id_opt {
+                group_map.entry(this_cc_id.clone()).or_default().push(doc)
+            }
+        });
+        group_map.into_par_iter().map(|(_k, v)| v).collect()
+    } else {
+        vec!(all_docs)
+    };
+
+
+    // single thread this, but parallelize within groups
+    let output_groups: Vec<JSONValue> = groups.into_iter().flat_map(|group| {
+        true_jaccard_annotate_group(group, text_key, id_key, &tokenizer, annotate_key, ngram_size).unwrap()
+    }).collect();
+    let mut output_contents: Vec<u8> = Vec::new();
+    for doc in output_groups {
+        output_contents.extend(serde_json::to_vec(&doc).unwrap());
+        output_contents.push(b'\n');
+    }
+    write_mem_to_pathbuf(&output_contents, output_path).unwrap();
+
+    Ok(())
+
+
+}
+
+fn collect_files_with_prefix(prefix: &PathBuf) -> Result<Vec<PathBuf>, Error> {
+    // Split the prefix into the parent directory and the filename prefix
+    let binding = PathBuf::new();
+    let dir = prefix.parent().unwrap_or(&binding);
+    let file_prefix = prefix
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    let mut matches = Vec::new();
+
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with(file_prefix) {
+                matches.push(path);
+            }
+        }
+    }
+
+    Ok(matches)
+}
+
+
+fn true_jaccard_annotate_group(mut group: Vec<JSONValue>, text_key: &String, id_key: &String, tokenizer: &OmniTokenizer, annotate_key: &String, ngram_size: usize) -> Result<Vec<JSONValue>, Error> {
+    let n = group.len();
+    let ids: Vec<JSONValue> = group.par_iter_mut().map(|doc| json_get(doc, id_key).unwrap().clone()).collect();
+
+
+    let group_wrapper = vec!(&group);
+    let toksets = toksetify(&group_wrapper, tokenizer, ngram_size, text_key).unwrap();
+    let pair_idxs: Vec<(usize, usize)> = (0..n).flat_map(move |i| ((i+1)..n).map(move |j| (i, j))).collect();
+    let pair_scores: DashMap<usize, DashMap<usize, f64>> = DashMap::new();
+    pair_idxs.into_par_iter().for_each(|(i,j)| {
+        let tokset_i = &toksets[0][i];
+        let tokset_j = &toksets[0][j];
+        let intersection_size: usize = tokset_i.iter().map(|v| if tokset_j.contains(&v) {1} else {0}).sum();
+        let union_size = tokset_i.len() + tokset_j.len() - intersection_size;
+        let jacc_score = intersection_size as f64 / union_size as f64;
+        pair_scores.entry(i).or_default().insert(j, jacc_score);
+        pair_scores.entry(j).or_default().insert(i, jacc_score);
+    });
+
+
+    let updates: Vec<(usize, JSONValue)> = pair_scores.into_par_iter().map(|(k, v)| {
+        let this_pair: HashMap<&JSONValue, f64> = v.into_iter().map(|(k2, v2)| {
+            (&ids[k2], v2)
+        }).collect();
+        let this_pair_json = json!(this_pair);
+        (k, this_pair_json)
+    }).collect();
+
+    for (k, this_pair_json) in updates {
+        json_set(&mut group[k], annotate_key, this_pair_json).unwrap();
+    }
+    Ok(group)
 }

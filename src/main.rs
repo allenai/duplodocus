@@ -100,7 +100,7 @@ use crate::minhash_disk::{
 };
 use crate::minhash_memory::minhash_memory;
 use crate::sa_base::{get_matches_serial, make_sa_tables_cmd, merge_matches, sa_annotate_files, get_matches_parallel};
-use crate::true_jaccard::true_jaccard;
+use crate::true_jaccard::{true_jaccard, jaccard_spot_check};
 
 pub mod exact_dedup_disk;
 pub mod exact_dedup_memory;
@@ -701,6 +701,38 @@ enum Commands {
         #[arg(long)]
         delete_while_cleaning: Option<bool>,
     },
+
+    #[clap(arg_required_else_help = true)]
+    JaccardSpotCheck {
+        /// Input prefix -- collects all files that start with this prefix and treats them as a single unit
+        #[arg(required = true, long)]
+        input_prefix: PathBuf,
+
+        #[arg(required = true, long)]
+        output_path: PathBuf,
+
+        #[arg(long, default_value_t=String::from("text"))]
+        text_key: String,
+
+        /// If present, only computes pairwise jaccards for cc's with the same cc_id
+        #[arg(long)]
+        minhash_cc_id: Option<String>,
+
+        /// Tokenizer: "cl100k", "p50k", "uniseg", or character-level (default)
+        #[arg(long)]
+        tokenizer: Option<String>,
+
+        #[arg(long, default_value_t=String::from("id"))]
+        id_key: String,
+
+        #[arg(required=true, long)]
+        annotate_key: String,
+
+        #[arg(long, default_value_t=5)]
+        ngram_size: usize,
+
+    },
+
     #[clap(arg_required_else_help = true)]
     SaMakeTables {
         #[arg(required = true, long)]
@@ -987,6 +1019,27 @@ fn main() {
             id_offset.clone(),
             delete_while_cleaning.clone(),
         ),
+
+        Commands::JaccardSpotCheck {
+            input_prefix,
+            output_path,
+            text_key,
+            minhash_cc_id,
+            tokenizer,
+            id_key,
+            annotate_key,
+            ngram_size,
+        } => jaccard_spot_check(
+            input_prefix,
+            output_path,
+            text_key,
+            minhash_cc_id.clone(),
+            tokenizer.clone(),
+            id_key,
+            annotate_key,
+            *ngram_size,
+        ),
+
         Commands::SaMakeTables {
             input_dir,
             output_dir,
