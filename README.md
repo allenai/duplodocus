@@ -74,7 +74,7 @@ source ~/.bashrc
 
 # Clone and build
 git clone git@github.com:allenai/duplodocus.git
-cd dedup-tool
+cd duplodocus
 cargo build --release
 
 # Binary will be at: ./target/release/dedup-tool
