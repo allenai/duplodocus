@@ -35,10 +35,3 @@ gjson = "0.8.1"
 smallvec = "1.15.1"
 sysinfo = "0.37.2"
 memmap2 = "0.9.9"
-src = "0.0.6"
-
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"

@@ -274,6 +274,16 @@ enum Commands {
         /// Can be nested, e.g., "metadata.duplicates"
         #[arg(long)]
         annotate_key: Option<String>,
+
+        /// Skip input paths whose string representation contains this substring.
+        /// Useful for excluding known-bad subtrees (e.g. "olmocr_science_pdfs").
+        #[arg(long, default_value_t = String::new())]
+        exclude_substring: String,
+
+        /// Keep only input paths whose string representation contains this substring.
+        /// Applied before --exclude-substring. Empty string (default) keeps all.
+        #[arg(long, default_value_t = String::new())]
+        include_substring: String,
     },
 
     /// Exact deduplication step 1/2: Group documents by hash
@@ -812,6 +822,8 @@ fn main() {
             hash_key,
             hash_bits,
             annotate_key,
+            exclude_substring,
+            include_substring,
         } => exact_dedup_memory(
             input_dir,
             output_dir,
@@ -819,6 +831,8 @@ fn main() {
             hash_key.clone(),
             *hash_bits,
             annotate_key.clone(),
+            exclude_substring.clone(),
+            include_substring.clone(),
         ),
 
         Commands::ExactDedupDiskGroup {
