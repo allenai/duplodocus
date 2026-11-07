@@ -179,7 +179,7 @@ impl FileMap {
 /// Unified tokenizer supporting multiple tokenization strategies.
 ///
 /// Supported tokenizers:
-/// - `"cl100k"`: OpenAI's cl100k_base tokenizer
+/// - `"cl100k"` or `"cl100k_base"`: OpenAI's cl100k_base tokenizer
 /// - `"p50k"`: OpenAI's p50k_base tokenizer  
 /// - `"uniseg"`: Unicode word boundary segmentation
 /// - `"bytes"`: Character-level (byte-based)
@@ -191,6 +191,11 @@ pub struct OmniTokenizer {
 impl OmniTokenizer {
     /// Creates a new tokenizer with the specified strategy.    
     pub fn new(tokenizer_name: &str) -> Result<Self, Error> {
+        // The default configuration and documented YAML use the full tokenizer name.
+        let tokenizer_name = match tokenizer_name {
+            "cl100k_base" => "cl100k",
+            name => name,
+        };
         // Validate tokenizer name
         match tokenizer_name {
             "p50k" | "cl100k" | "uniseg" | "bytes" => {
@@ -1336,4 +1341,24 @@ fn parse_clean_metadata_file(
     });
 
     Ok(metadata)
+}
+
+#[cfg(test)]
+mod tokenizer_tests {
+    use super::OmniTokenizer;
+    use crate::minhash_config::Config;
+
+    #[test]
+    fn default_tokenizer_matches_supported_short_name() {
+        let config = Config::default();
+        let default = OmniTokenizer::new(&config.minhash_params.tokenizer).unwrap();
+        let explicit = OmniTokenizer::new("cl100k").unwrap();
+        let text = "A short example with punctuation: 2 + 3 = 5.";
+        assert_eq!(default.encode(text), explicit.encode(text));
+    }
+
+    #[test]
+    fn unknown_tokenizer_is_rejected() {
+        assert!(OmniTokenizer::new("not-a-tokenizer").is_err());
+    }
 }
